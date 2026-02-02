@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alacak / Borç Takip</title>
+<style>
+body { font-family: Arial,sans-serif; background:#2c2c2c; color:#fff; margin:0; padding:0; }
+header { background:#1f1f1f; padding:15px; display:flex; justify-content:center; gap:10px; }
+header button { padding:10px 20px; border:none; cursor:pointer; font-weight:bold; border-radius:5px; transition:.3s; }
+#bekleyenBtn { background:#ff6b6b; color:#fff; }
+#odenenBtn { background:#4ecdc4; color:#fff; }
+header button.active { box-shadow:0 0 10px #fff; }
+
+#eklemeForm { display:flex; flex-wrap:wrap; gap:10px; padding:15px; background:#3a3a3a; }
+#eklemeForm input,#eklemeForm select,#eklemeForm textarea { padding:10px; border-radius:5px; border:none; outline:none; flex:1; min-width:150px; }
+#eklemeForm button { padding:10px 20px; border:none; border-radius:5px; background:#1f1f1f; color:#fff; cursor:pointer; font-weight:bold; transition:.3s; }
+#eklemeForm button:hover { background:#555; }
+
+#aramaInput { width:100%; padding:10px; margin:10px 0; border-radius:5px; border:none; }
+
+.kartlar { display:flex; flex-direction:column; gap:10px; padding:15px; }
+.kart { display:flex; justify-content:space-between; align-items:center; background:#444; padding:10px; border-radius:8px; box-shadow:0 0 5px #000; flex-wrap:wrap; }
+.kart .sol { flex:1; min-width:150px; }
+.kart .sol h3 { margin:0 0 5px 0; }
+.kart .sol p { margin:2px 0; font-size:.9em; color:#ddd; }
+.kart .sol span { font-weight:bold; }
+.kart .actions { display:flex; gap:5px; flex-wrap:wrap; }
+.kart .actions button { padding:5px 10px; border:none; border-radius:5px; cursor:pointer; font-size:.85em; transition:.2s; }
+.kart.alacakli { background:#ff6b6b; }
+.kart.borclu { background:#4ecdc4; }
+.kart .actions button:hover { opacity:.8; }
+
+#pdfBtn { margin:10px; padding:10px 20px; border:none; border-radius:5px; background:#f39c12; color:#fff; cursor:pointer; font-weight:bold; }
+#pdfBtn:hover { background:#e67e22; }
+
+</style>
+</head>
+<body>
+
+<header>
+    <button id="bekleyenBtn" class="active">Bekleyen</button>
+    <button id="odenenBtn">Ödenen</button>
+</header>
+
+<section id="eklemeForm">
+    <input type="text" id="musteriInput" placeholder="Müşteri Adı">
+    <textarea id="notInput" placeholder="Not / Açıklama"></textarea>
+    <select id="turSelect">
+        <option value="alacakli">Alacaklı</option>
+        <option value="borclu">Borçlu</option>
+    </select>
+    <button id="ekleBtn">Kaydet</button>
+</section>
+
+<input type="text" id="aramaInput" placeholder="Ara...">
+<button id="pdfBtn">PDF Çıktısı Al</button>
+
+<section class="kartlar" id="kartListesi"></section>
+
+<script src="https://apis.google.com/js/api.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<script>
+// --- CONFIG ---
+const CLIENT_ID = "524786981661-29s93m0emvohmm6o8ifco2fmkbi0ictl.apps.googleusercontent.com";
+const API_KEY = "AIzaSyABQids9dJL8fVtQhEVoYiTpT7_kMRWtB0";
+const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"];
+const SCOPES = "https://www.googleapis.com/auth/drive.file";
+const DRIVE_FILENAME = "alacak_borc_yedek.txt";
+const WHATSAPP_NUM = "905437366300"; // sabit numara
+
+// --- PASSWORD ---
+let sifre = prompt("Şifreyi giriniz:");
+if(!sifre){ alert("Şifre gerekli!"); throw "Şifre girilmedi"; }
+
+// --- LOCAL STORAGE ---
+const STORAGE_KEY = "takipData";
+let aktifListe = "bekleyen";
+let veri = JSON.parse(localStorage.getItem(STORAGE_KEY)) || { bekleyen: [], odenen: [] };
+
+// --- ELEMENTS ---
+const bekleyenBtn = document.getElementById("bekleyenBtn");
+const odenenBtn = document.getElementById("odenenBtn");
+const ekleBtn = document.getElementById("ekleBtn");
+const musteriInput = document.getElementById("musteriInput");
+const notInput = document.getElementById("notInput");
+const turSelect = document.getElementById("turSelect");
+const kartListesi = document.getElementById("kartListesi");
+const aramaInput = document.getElementById("aramaInput");
+const pdfBtn = document.getElementById("pdfBtn");
+
+// --- GOOGLE DRIVE ---
+function initGAPI() {
+    gapi.load('client:auth2', () => {
+        gapi.client.init({apiKey: API_KEY, clientId: CLIENT_ID, discoveryDocs: DISCOVERY_DOCS, scope: SCOPES})
+        .then(()=>console.log("Google API hazır"));
+    });
+}
+
+function driveYedekle(){
+    const veriStr = JSON.stringify(veri);
+    const sifreliVeri = btoa(sifre + veriStr);
+    const dosyaBlob = new Blob([sifreliVeri], {type:"text/plain"});
+    gapi.auth2.getAuthInstance().signIn().then(()=>{
+        const token = gapi.auth2.getAuthInstance().currentUser.get().getAuthResponse().access_token;
+        fetch(`https://www.googleapis.com/drive/v3/files?q=name='${DRIVE_FILENAME}'`, {headers:{Authorization:"Bearer "+token}})
+        .then(r=>r.json()).then(res=>{
+            if(res.files && res.files.length>0){
+                const fileId = res.files[0].id;
+                fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+                    method:"PATCH",
+                    headers:{Authorization:"Bearer "+token},
+                    body: dosyaBlob
+                });
+            } else {
+                const metadata = {name:DRIVE_FILENAME, mimeType:"text/plain"};
+                const form = new FormData();
+                form.append("metadata", new Blob([JSON.stringify(metadata)], {type:"application/json"}));
+                form.append("file", dosyaBlob);
+                fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
+                    method:"POST",
+                    headers:{Authorization:"Bearer "+token},
+                    body: form
+                });
+            }
+        });
+    });
+}
+
+// --- RENDER ---
+function renderListe(){
+    kartListesi.innerHTML="";
+    const filtre = aramaInput.value.toLowerCase();
+    veri[aktifListe].forEach((item,index)=>{
+        if(item.musteri.toLowerCase().includes(filtre) || item.not.toLowerCase().includes(filtre)){
+            const kart=document.createElement("div");
+            kart.className="kart "+(item.tur==="alacakli"?"alacakli":"borclu");
+            kart.innerHTML=`
+            <div class="sol">
+                <h3>${item.musteri}</h3>
+                <p>${item.not}</p>
+                <p><span>${item.tur==="alacakli"?"Alacaklı":"Borçlu"}</span> - ${item.tarih}</p>
+            </div>
+            <div class="actions">
+                <button onclick="sil(${index})">Sil</button>
+                <button onclick="odendi(${index})">Ödendi</button>
+                <button onclick="duzenle(${index})">Düzenle</button>
+                <button onclick="wpGonder('${item.musteri}','${item.not}','${item.tur}')">WhatsApp</button>
+            </div>`;
+            kartListesi.appendChild(kart);
+        }
+    });
+}
+
+// --- CRUD ---
+function kaydet(){ 
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(veri));
+    driveYedekle();
+}
+function sil(index){ if(confirm("Silmek istediğine emin misin?")){ veri[aktifListe].splice(index,1); kaydet(); renderListe(); } }
+function odendi(index){ const item=veri[aktifListe][index]; veri[aktifListe].splice(index,1); veri.odenen.push(item); kaydet(); renderListe(); }
+function duzenle(index){ 
+    const item=veri[aktifListe][index]; 
+    const yeniMusteri=prompt("Müşteri Adı:",item.musteri);
+    const yeniNot=prompt("Not / Açıklama:",item.not);
+    const yeniTur=prompt("Alacaklı veya Borçlu? (alacakli/borclu):",item.tur);
+    if(yeniMusteri && yeniNot && (yeniTur==="alacakli"||yeniTur==="borclu")){ 
+        item.musteri=yeniMusteri; item.not=yeniNot; item.tur=yeniTur; kaydet(); renderListe(); 
+    } 
+}
+function wpGonder(musteri,not,tur){
+    const mesaj = `Müşteri: ${musteri}\nNot: ${not}\nDurum: ${tur==="alacakli"?"Alacaklı":"Borçlu"}`;
+    window.open(`https://wa.me/${WHATSAPP_NUM}?text=${encodeURIComponent(mesaj)}`, "_blank");
+}
+
+// --- PDF ---
+pdfBtn.addEventListener("click", ()=>{
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    let y = 10;
+    veri[aktifListe].forEach(item=>{
+        doc.text(`Müşteri: ${item.musteri}`,10,y); y+=6;
+        doc.text(`Not: ${item.not}`,10,y); y+=6;
+        doc.text(`Durum: ${item.tur==="alacakli"?"Alacaklı":"Borçlu"}`,10,y); y+=6;
+        doc.text(`Tarih: ${item.tarih}`,10,y); y+=10;
+    });
+    doc.save(`${aktifListe}_liste.pdf`);
+});
+
+// --- EVENTS ---
+ekleBtn.addEventListener("click",()=>{
+    const musteri=musteriInput.value.trim();
+    const not=notInput.value.trim();
+    const tur=turSelect.value;
+    if(!musteri){ alert("Müşteri adı gerekli!"); return; }
+    const tarih=new Date().toLocaleString();
+    veri.bekleyen.push({musteri,not,tur,tarih});
+    musteriInput.value=""; notInput.value="";
+    kaydet(); renderListe();
+});
+
+bekleyenBtn.addEventListener("click",()=>{ aktifListe="bekleyen"; bekleyenBtn.classList.add("active"); odenenBtn.classList.remove("active"); renderListe(); });
+odenenBtn.addEventListener("click",()=>{ aktifListe="odenen"; odenenBtn.classList.add("active"); bekleyenBtn.classList.remove("active"); renderListe(); });
+aramaInput.addEventListener("input",renderListe);
+
+// --- INIT ---
+initGAPI();
+renderListe();
+</script>
+</body>
+</html>
